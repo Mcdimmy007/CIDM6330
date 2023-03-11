@@ -1,56 +1,38 @@
-from __future__ import annotations
+# pylint: disable=unused-import
+from flask import Flask, request, jsonify
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-import logging
-from typing import TYPE_CHECKING, Callable, Dict, List, Type, Union
+from barkylib.adapters import orm, redis_eventpublisher
+from barkylib.services import messagebus, unit_of_work
 
-from barkylib.domain import commands, events
+def app (environment="dev"):
+    app = Flask(__name__)
+    if environment == "dev":
+        app.config["DEBUG"] = True
+        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///dev.sqlite3"
+    else:
+        app.config["DEBUG"] = False
+        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///prod.sqlite3"
 
-if TYPE_CHECKING:
-    from . import unit_of_work
 
-logger = logging.getLogger(__name__)
+    engine = create_engine(app.config["SQLALCHEMY_DATABASE_URI"], echo=False)
+    session_factory = sessionmaker(bind=engine)
+    orm.start_mappers()
+    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory)
+    pub = redis_eventpublisher.RedisEventPublisher()
+    message_bus = messagebus.MessageBus(
+        uow, event_handlers={}, command_handlers=messagebus.command_handlers(uow)
+    
+    )
 
-Message = Union[commands.Command, events.Event]
+    @app.route("/add_book", methods=["POST"])
+    def add_book():
+        data = request.get_json()
+        command = commands.CreateBookCommand(
+            data["title"], data["author"], data["published_date"], data["book_type"]
+        )
+        message_bus.handle(command)
+        return jsonify({"message": "Book added successfully."})
 
-
-class MessageBus:
-    def __init__(
-        self,
-        uow: unit_of_work.AbstractUnitOfWork,
-        event_handlers: Dict[Type[events.Event], List[Callable]],
-        command_handlers: Dict[Type[commands.Command], Callable],
-    ):
-        self.uow = uow
-        self.event_handlers = event_handlers
-        self.command_handlers = command_handlers
-
-    def handle(self, message: Message):
-        self.queue = [message]
-        while self.queue:
-            message = self.queue.pop(0)
-            if isinstance(message, events.Event):
-                self.handle_event(message)
-            elif isinstance(message, commands.Command):
-                self.handle_command(message)
-            else:
-                raise Exception(f"{message} was not an Event or Command")
-
-    def handle_event(self, event: events.Event):
-        for handler in self.event_handlers[type(event)]:
-            try:
-                logger.debug("handling event %s with handler %s", event, handler)
-                handler(event)
-                self.queue.extend(self.uow.collect_new_events())
-            except Exception:
-                logger.exception("Exception handling event %s", event)
-                continue
-
-    def handle_command(self, command: commands.Command):
-        logger.debug("handling command %s", command)
-        try:
-            handler = self.command_handlers[type(command)]
-            handler(command)
-            self.queue.extend(self.uow.collect_new_events())
-        except Exception:
-            logger.exception("Exception handling command %s", command)
-            raise
+    return app

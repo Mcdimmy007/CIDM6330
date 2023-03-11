@@ -11,9 +11,7 @@ from sqlalchemy.orm.session import Session
 
 
 class AbstractUnitOfWork(ABC):
-    bookmarks: repository.AbstractRepository
-
-    def __enter__(self) -> AbstractUnitOfWork:
+    def __enter__(self) -> "AbstractUnitOfWork":
         return self
 
     def __exit__(self, *args):
@@ -35,30 +33,31 @@ class AbstractUnitOfWork(ABC):
     def rollback(self):
         raise NotImplementedError
 
-
-DEFAULT_SESSION_FACTORY = sessionmaker(
-    bind=create_engine(
-        config.get_sqlite_file_url(),
-        isolation_level="REPEATABLE READ",
-    )
-)
-
-
+# In the "SqlAlchemyUnitofWork" class takes a "Session" object
 class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
-    def __init__(self, session_factory=DEFAULT_SESSION_FACTORY):
-        self.session_factory = session_factory
+    def __init__(self, session: Session):
+        self.session = session
+        self.products = repository.SqlAlchemyRepository(session)
 
-    def __enter__(self):
-        self.session = self.session_factory()  # type: Session
-        self.products = repository.SqlAlchemyRepository(self.session)
-        return super().__enter__()
+# This enter method returns the object itself
+    def __enter__(self) -> "SqlAlchemyUnitOfWork":
+        return self
 
+# The exit method calls the parent class exit without passing any argument
     def __exit__(self, *args):
         super().__exit__(*args)
-        self.session.close()
 
     def _commit(self):
         self.session.commit()
 
     def rollback(self):
         self.session.rollback()
+
+# This creates a session factory and returns the session object
+def create_session():
+    engine = create_engine(
+        config.get_sqlite_file_url(),
+        isolation_level="REPEATABLE READ",
+    )
+    session_factory = sessionmaker(bind=engine)
+    return session_factory()
