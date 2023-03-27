@@ -9,58 +9,42 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 
+from abc import abstractmethod
+from typing import Protocol
 
-class AbstractUnitOfWork(abc.ABC):
+
+
+class AbstractUnitOfWork(Protocol):
     products: repository.AbstractRepository
 
-    def __enter__(self) -> AbstractUnitOfWork:
-        return self
+    @abstractmethod
+    def __enter__(self) -> "AbstractUnitOfWork":
+        pass
 
-    def __exit__(self, *args):
-        self.rollback()
+    def __exit__(self, exn_type, exn_value, traceback):
+        pass
 
     def commit(self):
-        self._commit()
+        pass
 
-    def collect_new_events(self):
-        for product in self.products.seen:
-            while product.events:
-                yield product.events.pop(0)
-
-    @abc.abstractmethod
-    def _commit(self):
-        raise NotImplementedError
-
-    @abc.abstractmethod
     def rollback(self):
-        raise NotImplementedError
+        pass
 
 
-DEFAULT_SESSION_FACTORY = sessionmaker(
-    bind=create_engine(
-        # substituting POSTGRES with the in-memory sqlite
-        # config.get_postgres_uri(),
-        "sqlite+pysqlite:///:memory:",
-        echo=True,
-        isolation_level="REPEATABLE READ",
-    )
-)
-
-
-class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
-    def __init__(self, session_factory=DEFAULT_SESSION_FACTORY):
+class SQLAlchemyUnitOfWork:
+    def __init__(self, session_factory):
         self.session_factory = session_factory
 
     def __enter__(self):
-        self.session = self.session_factory()  # type: Session
-        self.products = repository.SqlAlchemyRepository(self.session)
-        return super().__enter__()
+        self.session = self.session_factory()
+        self.products = repository.SQLAlchemyRepository(self.session)
+        return self
 
-    def __exit__(self, *args):
-        super().__exit__(*args)
+    def __exit__(self, exn_type, exn_value, traceback):
+        self.rollback()
         self.session.close()
 
-    def _commit(self):
+    def commit(self):
         self.session.commit()
 
     def rollback(self):

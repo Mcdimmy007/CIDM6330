@@ -1,77 +1,58 @@
-import logging
+from sqlalchemy import MetaData, Table, Column, Integer, String, ForeignKey
+from sqlalchemy.orm import registry  # type: ignore
+from sqlalchemy.orm import relationship
+from allocation.domain.model import OrderLine, Batch, Product
 
-from allocation.domain import model
-from sqlalchemy import Column, Date, ForeignKey, Integer, MetaData, String, Table, event
-from sqlalchemy.orm import mapper, relationship
+metadata_fm = MetaData()
+mapper_registry = registry(metadata_fm)
 
-logger = logging.getLogger(__name__)
-
-metadata = MetaData()
-
-order_lines = Table(
-    "order_lines",
-    metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("sku", String(255)),
-    Column("qty", Integer, nullable=False),
-    Column("orderid", String(255)),
-)
-
-products = Table(
-    "products",
-    metadata,
-    Column("sku", String(255), primary_key=True),
-    Column("version_number", Integer, nullable=False, server_default="0"),
-)
-
-batches = Table(
+batches_table = Table(
     "batches",
-    metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("reference", String(255)),
-    Column("sku", ForeignKey("products.sku")),
-    Column("_purchased_quantity", Integer, nullable=False),
-    Column("eta", Date, nullable=True),
+    mapper_registry.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("reference", String(50)),
+    Column("sku", String(50), ForeignKey("products.sku")),
+    Column("available_quantity", Integer),
 )
 
-allocations = Table(
+order_lines_table = Table(
+    "order_lines",
+    mapper_registry.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("order_reference", String(50)),
+    Column("sku", String(50)),
+    Column("quantity", Integer),
+)
+
+allocation_table = Table(
     "allocations",
-    metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("orderline_id", ForeignKey("order_lines.id")),
-    Column("batch_id", ForeignKey("batches.id")),
+    mapper_registry.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("batch_id", Integer, ForeignKey("batches.id")),
+    Column("order_line_id", Integer, ForeignKey("order_lines.id")),
 )
 
-allocations_view = Table(
-    "allocations_view",
-    metadata,
-    Column("orderid", String(255)),
-    Column("sku", String(255)),
-    Column("batchref", String(255)),
+product_table = Table(
+    "products", mapper_registry.metadata, Column("sku", String, primary_key=True)
 )
 
 
-def start_mappers():
-    logger.info("Starting mappers")
-    lines_mapper = mapper(model.OrderLine, order_lines)
-    batches_mapper = mapper(
-        model.Batch,
-        batches,
+def map_allocation():
+    mapper_registry.map_imperatively(OrderLine, order_lines_table)
+    mapper_registry.map_imperatively(
+        Batch,
+        batches_table,
         properties={
-            "_allocations": relationship(
-                lines_mapper,
-                secondary=allocations,
+            "_allocated_order_lines": relationship(
+                OrderLine,
+                secondary=allocation_table,
                 collection_class=set,
             )
         },
     )
-    mapper(
-        model.Product,
-        products,
-        properties={"batches": relationship(batches_mapper)},
+    mapper_registry.map_imperatively(
+        Product, product_table, properties={"batches": relationship(Batch)}
     )
 
 
-@event.listens_for(model.Product, "load")
-def receive_load(product, _):
-    product.events = []
+map_allocation()
