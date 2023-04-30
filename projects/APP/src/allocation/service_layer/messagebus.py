@@ -13,13 +13,13 @@ logger = logging.getLogger(__name__)
 
 Message = Union[commands.Command, events.Event]
 
-
+## command_handlers attribute was added to the '__init__' method
 class MessageBus:
     def __init__(
         self,
         uow: unit_of_work.AbstractUnitOfWork,
-        event_handlers: Dict[Type[events.Event], List[Callable]],
-        command_handlers: Dict[Type[commands.Command], Callable],
+        event_handlers: Dict[Type[events.Event], List[Callable[[events.Event], None]]],
+        command_handlers: Dict[Type[commands.Command], Callable[[commands.Command], None]],
     ):
         self.uow = uow
         self.event_handlers = event_handlers
@@ -55,3 +55,7 @@ class MessageBus:
         except Exception:
             logger.exception("Exception handling command %s", command)
             raise
+
+# With the updated code, the handle function takes a Message parameter, but instead of using an if statement, 
+# it simply adds the message to a queue and then repeatedly pops messages from the queue and handles them until 
+# the queue is empty.

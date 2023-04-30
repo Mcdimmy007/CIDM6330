@@ -1,56 +1,67 @@
-# pylint: disable=broad-except
-from datetime import date
-from flask import Flask, request, jsonify
-from sqlalchemy.orm import scoped_session, sessionmaker
+from datetime import datetime
+from flask import Flask, request
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, clear_mappers
+
+from allocation import config
 from allocation.domain import model
-from allocation.service_layer import unit_of_work, handlers, messagebus
+from allocation.adapters import orm, repository
+from allocation.service_layer import services, unit_of_work
 
-def create_app(engine, test_config=None):
+
+def index_endpoint():
+    return "<p>HELLO FROM THE API</p>"
+
+
+def add_batch_endpoint():
+    eta = request.json["eta"]
+    if eta is not None:
+        eta = datetime.fromisoformat(eta).date()
+    services.add_batch(
+        request.json["ref"],
+        request.json["sku"],
+        request.json["qty"],
+        eta,
+        unit_of_work.SqlAlchemyUnitOfWork(),
+    )
+    return "OK", 201
+
+
+def allocate_endpoint():
+    # clear_mappers()
+    # orm.start_mappers()
+    # get_session = sessionmaker(bind=create_engine(config.get_sqlite_filedb_uri()))
+    # session = get_session()
+    # repo = repository.SqlAlchemyRepository(session)
+    # line = model.OrderLine(
+    #     request.json["orderid"],
+    #     request.json["sku"],
+    #     request.json["qty"],
+    # )
+
+    try:
+        batchref = services.allocate(
+            request.json["orderid"],
+            request.json["sku"],
+            request.json["qty"],
+            unit_of_work.SqlAlchemyUnitOfWork(),
+        )
+    except (model.OutOfStock, services.InvalidSku) as e:
+        return {"message": str(e)}, 400
+
+    return {"batchref": batchref}, 201
+
+
+def create_app():
     app = Flask(__name__)
-    session_maker = scoped_session(sessionmaker(bind=engine))
+    app.config.update({"TESTING": True})
 
-    @app.route("/schoolwork")
-    def schoolwork():
-        return "OK", 200
-
-    @app.route("/allocate", methods=["POST"])
-    def allocate():
-        try:
-            data = request.get_json()
-            assert data is not None
-            line_to_allocate = model.OrderLine(
-                data["order_reference"],
-                data["sku"],
-                data["quantity"],
-            )
-            batch_ref = handlers.allocate(
-                line_to_allocate, unit_of_work.SQLAlchemyUnitOfWork(session_maker)
-            )
-            return jsonify({"batch_ref": batch_ref}), 201
-        except (KeyError, AssertionError):
-            return jsonify({"error": "Invalid JSON data"}), 400
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/add_batch", methods=["POST"])
-    def add_batch():
-        try:
-            data = request.get_json()
-            assert data is not None
-            eta = data.get("eta")
-            if eta is None:
-                eta = date.today()
-            batch_ref = handlers.add_batch(
-                unit_of_work.SQLAlchemyUnitOfWork(session_maker),
-                data["reference"],
-                data["sku"],
-                data["available_quantity"],
-                eta,
-            )
-            return jsonify({"batch_ref": batch_ref}), 201
-        except (KeyError, AssertionError):
-            return jsonify({"error": "Invalid JSON data"}), 400
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
+    app.add_url_rule("/", "index", view_func=index_endpoint)
+    app.add_url_rule(
+        "/add_batch", "add_batch", view_func=add_batch_endpoint, methods=["POST"]
+    )
+    app.add_url_rule(
+        "/allocate", "allocate", view_func=allocate_endpoint, methods=["POST"]
+    )
 
     return app

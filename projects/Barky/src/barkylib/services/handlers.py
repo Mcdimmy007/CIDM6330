@@ -1,57 +1,71 @@
-from flask import Flask, jsonify, request
-from sqlalchemy.orm import Session
+from __future__ import annotations
 
-from barkylib.adapters.orm import SqlAlchemyBookmarkRepository
-from barkylib.domain.models import Bookmark
-from barkylib.services import handlers, messagebus, unit_of_work
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Callable, Dict, List, Type
 
-# The new app is created
-app = Flask(__name__)
+from barkylib.domain import commands, events, models
+from barkylib.domain.commands import EditBookmarkCommand
+from barkylib.domain.events import BookmarkEdited
 
-# HTTP routes are defined
-# The Routes call messagebus.handle() so as to pass commands to the right handler
+if TYPE_CHECKING:
+    from . import unit_of_work
 
-@app.route("/bookmarks", methods=["GET"])
-def list_bookmarks():
-    uow = unit_of_work.SqlAlchemyUnitOfWork()
+
+def add_bookmark(
+    cmd: commands.AddBookmarkCommand,
+    uow: unit_of_work.AbstractUnitOfWork,
+):
     with uow:
-        bookmarks = handlers.list_bookmarks(
-            request.args.get("order_by"), request.args.get("order"), uow
-        )
-    return jsonify([bookmark.to_dict() for bookmark in bookmarks])
-
-@app.route("/bookmarks", methods=["POST"])
-def add_bookmark():
-    data = request.get_json()
-    command = handlers.CreateBookmarkCommand(
-        data["title"], data["url"], data.get("notes")
-    )
-    uow = unit_of_work.SqlAlchemyUnitOfWork()
-    with uow:
-        messagebus.handle(command, uow)
+        # look to see if we already have this bookmark as the title is set as unique
+        bookmark = uow.bookmarks.get(title=cmd.title)
+        if bookmark is None:
+            bookmark = models.Bookmark(
+                cmd.title, cmd.url, cmd.date_added, cmd.date_edited, cmd.notes
+            )
+            uow.bookmarks.add(bookmark)
         uow.commit()
-    return ""
 
-@app.route("/bookmarks/<bookmark_id>", methods=["PUT"])
-def update_bookmark(bookmark_id):
-    data = request.get_json()
-    command = handlers.UpdateBookmarkCommand(
-        bookmark_id, data.get("title"), data.get("url"), data.get("notes")
-    )
-    uow = unit_of_work.SqlAlchemyUnitOfWork()
+
+# ListBookmarksCommand: order_by: str order: str
+def list_bookmarks(
+    cmd: commands.ListBookmarksCommand,
+    uow: unit_of_work.AbstractUnitOfWork,
+):
+    bookmarks = None
     with uow:
-        messagebus.handle(command, uow)
-        uow.commit()
-    return ""
+        bookmarks = uow.bookmarks.all()
 
-@app.route("/bookmarks/<bookmark_id>", methods=["DELETE"])
-def delete_bookmark(bookmark_id):
-    command = handlers.DeleteBookmarkCommand(bookmark_id)
-    uow = unit_of_work.SqlAlchemyUnitOfWork()
+    return bookmarks
+
+
+# DeleteBookmarkCommand: id: int
+def delete_bookmark(
+    cmd: commands.DeleteBookmarkCommand,
+    uow: unit_of_work.AbstractUnitOfWork,
+):
     with uow:
-        messagebus.handle(command, uow)
-        uow.commit()
-    return ""
+        pass
 
-if __name__ == "__main__":
-    app.run()
+
+# EditBookmarkCommand(Command):
+def edit_bookmark(
+    cmd: commands.EditBookmarkCommand,
+    uow: unit_of_work.AbstractUnitOfWork,
+):
+    with uow:
+        pass
+
+
+EVENT_HANDLERS = {
+    events.BookmarkAdded: [add_bookmark],
+    events.BookmarksListed: [list_bookmarks],
+    events.BookmarkDeleted: [delete_bookmark],
+    events.BookmarkEdited: [edit_bookmark],
+}  # type: Dict[Type[events.Event], List[Callable]]
+
+COMMAND_HANDLERS = {
+    commands.AddBookmarkCommand: add_bookmark,
+    commands.ListBookmarksCommand: list_bookmarks,
+    commands.DeleteBookmarkCommand: delete_bookmark,
+    commands.EditBookmarkCommand: edit_bookmark,
+}  # type: Dict[Type[commands.Command], Callable]

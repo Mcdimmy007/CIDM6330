@@ -1,26 +1,28 @@
-# pylint: disable=import-error
-from typing import Protocol
-from allocation.domain.model import Product
-from abc import abstractmethod
+import abc
+from allocation.domain import model
+
+from sqlalchemy import select
 
 
-class AbstractRepository(Protocol):
-    @abstractmethod
-    def add(self, product: Product) -> None:
-        pass
+class AbstractRepository(abc.ABC):
+    @abc.abstractmethod
+    def add(self, batch: model.Product):
+        raise NotImplementedError
 
-    @abstractmethod
-    def get(self, sku: str) -> Product:
-        pass
+    @abc.abstractmethod
+    def get(self, sku) -> model.Product:
+        raise NotImplementedError
 
 
-class SQLAlchemyRepository:
-    def __init__(self, session) -> None:
+class SqlAlchemyRepository(AbstractRepository):
+    def __init__(self, session):
         self.session = session
 
-    def add(self, product: Product) -> None:
+    def add(self, product):
         self.session.add(product)
 
-    def get(self, sku: str) -> Product:
-        return self.session.query(Product).filter_by(sku=sku).first()
+    def get(self, sku):
+        return self.session.scalars(
+            select(model.Product).filter_by(sku=sku)
+        ).first()
 

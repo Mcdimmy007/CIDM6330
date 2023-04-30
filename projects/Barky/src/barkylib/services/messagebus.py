@@ -1,38 +1,66 @@
-# pylint: disable=unused-import
-from flask import Flask, request, jsonify
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from __future__ import annotations
 
-from barkylib.adapters import orm, redis_eventpublisher
-from barkylib.services import messagebus, unit_of_work
+import logging
+from typing import TYPE_CHECKING, Callable, Dict, List, Type, Union
 
-def app (environment="dev"):
-    app = Flask(__name__)
-    if environment == "dev":
-        app.config["DEBUG"] = True
-        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///dev.sqlite3"
-    else:
-        app.config["DEBUG"] = False
-        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///prod.sqlite3"
+from barkylib.domain import commands, events
 
+if TYPE_CHECKING:
+    from . import unit_of_work
 
-    engine = create_engine(app.config["SQLALCHEMY_DATABASE_URI"], echo=False)
-    session_factory = sessionmaker(bind=engine)
-    orm.start_mappers()
-    uow = unit_of_work.SqlAlchemyUnitOfWork(session_factory)
-    pub = redis_eventpublisher.RedisEventPublisher()
-    message_bus = messagebus.MessageBus(
-        uow, event_handlers={}, command_handlers=messagebus.command_handlers(uow)
+logger = logging.getLogger(__name__)
+
+Message = Union[commands.Command, events.Event]
+
+## The MessageBus class now has a queue_commands and a queue_events method that are used to handle the commands and events returned
+## by the unit of works 'collect_new_commands' and collect_new_events' method respectively.
+class MessageBus:
+    def __init__(
+        self,
+        uow: unit_of_work.AbstractUnitOfWork,
+        event_handlers: Dict[Type[events.Event], List[Callable]],
+        command_handlers: Dict[Type[commands.Command], Callable],
+    ):
+        self.uow = uow
+        self.event_handlers = event_handlers
+        self.command_handlers = command_handlers
+
+    ## The handle method has been updated to only process one message at a time, since messages are now handled through
+    ## the 'queue_commands and 'queue_events'
     
-    )
+    def handle(self, message: Message):
+        if isinstance(message, events.Event):
+            self.handle_event(message)
+        elif isinstance(message, commands.Command):
+            self.handle_command(message)
+        else:
+            raise Exception(f"{message} was not an Event or Command")
 
-    @app.route("/add_book", methods=["POST"])
-    def add_book():
-        data = request.get_json()
-        command = commands.CreateBookCommand(
-            data["title"], data["author"], data["published_date"], data["book_type"]
-        )
-        message_bus.handle(command)
-        return jsonify({"message": "Book added successfully."})
+    def handle_event(self, event: events.Event):
+        handlers = self.event_handlers[type(event)]
+        for handler in handlers:
+            try:
+                logger.debug("handling event %s with handler %s", event, handler)
+                handler(event)
+                self.queue_commands(self.uow.collect_new_commands())
+            except Exception:
+                logger.exception("Exception handling event %s", event)
+                continue
 
-    return app
+    def handle_command(self, command: commands.Command):
+        logger.debug("handling command %s", command)
+        try:
+            handler = self.command_handlers[type(command)]
+            handler(command)
+            self.queue_events(self.uow.collect_new_events())
+        except Exception:
+            logger.exception("Exception handling command %s", command)
+            raise
+ #
+    def queue_commands(self, commands: List[commands.Command]):
+        for command in commands:
+            self.handle(command)
+
+    def queue_events(self, events: List[events.Event]):
+        for event in events:
+            self.handle(event)

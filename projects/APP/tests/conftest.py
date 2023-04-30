@@ -1,39 +1,57 @@
 # pylint: disable=redefined-outer-name
-import shutil
-import subprocess
+import os
 import time
 from pathlib import Path
 
 import pytest
+<<<<<<< HEAD
+from sqlalchemy.exc import OperationalError
+=======
 import redis
 import requests
 from allocation import config
-from allocation.adapters.orm import metadata, start_mappers
+from allocation.adapters.orm import mapper_registry, start_mappers
+>>>>>>> ab31b3ba1a1fb4bbdf5f126182980f97ca51702c
 from sqlalchemy import create_engine
-from sqlalchemy.orm import clear_mappers, sessionmaker
-from tenacity import retry, stop_after_delay
+from sqlalchemy.sql import delete, insert, select, text
+from sqlalchemy.orm import sessionmaker, clear_mappers
 
-pytest.register_assert_rewrite("tests.e2e.api_client")
+from allocation import config
+from allocation.entrypoints.flask_app import create_app
+from allocation.domain.model import Batch
+from allocation.adapters.orm import mapper_registry, start_mappers, batches
 
 
 @pytest.fixture
-def in_memory_sqlite_db():
+def in_memory_db():
     engine = create_engine("sqlite:///:memory:")
-    metadata.create_all(engine)
+    mapper_registry.metadata.create_all(engine)
     return engine
 
 
 @pytest.fixture
-def sqlite_session_factory(in_memory_sqlite_db):
-    yield sessionmaker(bind=in_memory_sqlite_db)
+def file_sqlite_db():
+    engine = create_engine(config.get_sqlite_filedb_uri())
+    mapper_registry.metadata.create_all(engine)
+    return engine
 
 
 @pytest.fixture
-def mappers():
+def session_factory(file_sqlite_db):
+    # setup
     start_mappers()
-    yield
+    # what is "yield?"
+    # Python Generators: https://realpython.com/introduction-to-python-generators/
+    yield sessionmaker(bind=file_sqlite_db)()
+    # teardown
     clear_mappers()
+    file_sqlite_db.dispose()
 
+<<<<<<< HEAD
+    # remove db
+    path = Path(__file__).parent
+    os.remove(path / "allocation.db")
+=======
 
 @retry(stop=stop_after_delay(10))
 def wait_for_postgres_to_come_up(engine):
@@ -55,34 +73,21 @@ def wait_for_redis_to_come_up():
 def postgres_db():
     engine = create_engine(config.get_postgres_uri(), isolation_level="SERIALIZABLE")
     wait_for_postgres_to_come_up(engine)
-    metadata.create_all(engine)
+    mapper_registry.metadata.create_all(engine)
     return engine
+>>>>>>> ab31b3ba1a1fb4bbdf5f126182980f97ca51702c
 
 
 @pytest.fixture
-def postgres_session_factory(postgres_db):
-    yield sessionmaker(bind=postgres_db)
-
-
-@pytest.fixture
-def postgres_session(postgres_session_factory):
-    return postgres_session_factory()
-
+def session(session_factory):
+    return session_factory
 
 @pytest.fixture
-def restart_api():
-    (Path(__file__).parent / "../src/allocation/entrypoints/flask_app.py").touch()
-    time.sleep(0.5)
-    wait_for_webapp_to_come_up()
-
+def test_client(flask_api):
+    return flask_api.test_client()
 
 @pytest.fixture
-def restart_redis_pubsub():
-    wait_for_redis_to_come_up()
-    if not shutil.which("docker-compose"):
-        print("skipping restart, assumes running in container")
-        return
-    subprocess.run(
-        ["docker-compose", "restart", "-t", "0", "redis_pubsub"],
-        check=True,
-    )
+def flask_api(session):
+    app = create_app()
+    app.config.update({"TESTING": True})
+    return app
