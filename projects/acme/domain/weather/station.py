@@ -1,98 +1,55 @@
+"""Two new classes StationQuery and StationQueryHandler are created here"""
 from abc import ABC, abstractmethod, abstractproperty
-from dataclasses import dataclass, field
-from enum import Enum, IntEnum
-from typing import List, TypeAlias
-from urllib.error import HTTPError
-from xml.etree.ElementTree import Element, fromstring
 
-import requests
-from iniconfig import ParseError
+class StationQuery:
+    def __init__(self, station_id: str = "", latitude: float = 0.0, longitude: float = 0.0):
+        self.station_id = station_id
+        self.latitude = latitude
+        self.longitude = longitude
 
+class StationQueryHandler:
+    def __init__(self, station_helper: StationHelper):
+        self.station_helper = station_helper
 
-class StationType(IntEnum):
-    """
-    https://aviationweather.gov/dataserver/fields?datatype=station
-    The station type, which can be a combination of the following:
-    METAR | rawinsonde | TAF | NEXRAD | wind_profiler | WFO_office | SYNOPS
-
-    Useful information on enums: https://betterprogramming.pub/enumerations-in-python-b01a1fb479de
-    """
-
-    METAR = 0
-    RAWINDSONDE = 1
-    TAF = 2
-    NEXRAD = 3
-    WIND_PROFILER = 4
-    WFO_OFFICE = 5
-    SYNOPS = 6
-
-
-# https://docs.python.org/3/library/dataclasses.html#module-dataclasses
-@dataclass
-class Station:
-    """
-    https://aviationweather.gov/dataserver/fields?datatype=station
-    """
-
-    station_id: str = ""  # The 4-letter station specifier
-    wmo_id: str = ""  # Four-letter WMO Id for the station
-    latitude: float = 0.0  # The latitude in decimal degrees
-    longitude: float = 0.0  # The longitude in decimal degrees
-    elevation_m: float = (
-        0.0  # The elevation of the station in MSL (above mean sea-level)
-    )
-    site: str = ""  # The "common" name/human-readable name of the station
-    state: str = (
-        ""  # The two-letter abbreviation for the U.S. state or Canadian province
-    )
-    country: str = ""  # The two-letter country abbreviation
-    site_type: List[StationType] = field(default_factory=list)
-
-    # properties - https://docs.python.org/3/library/functions.html#property
-
+    def handle(self, query: StationQuery) -> Station:
+        if query.station_id:
+            return self.station_helper.get_station_from_station_id(query.station_id)
+        elif query.latitude and query.longitude:
+            return self.station_helper.get_station_from_lat_lon(query.latitude, query.longitude)
+        else:
+            raise ValueError("Invalid query. You must provide either a station ID or a latitude and longitude.")
 
 class StationHelper(ABC):
-    """
-    A utility class containing routines to assist in creating stations
-    """
-
-    # static methods - https://docs.python.org/3/library/functions.html#staticmethod
-    # abstract methods - https://docs.python.org/3/library/abc.html#abc.abstractmethod
-    @staticmethod
     @abstractmethod
-    def get_station_from_station_id(station_id: str) -> Station:
+    def get_station_from_station_id(self, station_id: str) -> Station:
         pass
 
-    @staticmethod
     @abstractmethod
-    def get_station_from_lat_lon(latitude: float, longitude: float) -> Station:
+    def get_station_from_lat_lon(self, latitude: float, longitude: float) -> Station:
         pass
-
 
 class NOAAADDSStationHelper(StationHelper):
-    NOAA_ADDS_URL = (
-        f"https://aviationweather-bldr.ncep.noaa.gov/adds/dataserver_current/httpparam"
-    )
-    # guide url params: dataSource=stations&requestType=retrieve&format=xml&stationString=KAMA
-    NOAA_ADDS_FORMAT = "xml"
+    def __init__(self, noaa_adds_url: str, noaa_adds_format: str):
+        self.noaa_adds_url = noaa_adds_url
+        self.noaa_adds_format = noaa_adds_format
 
-    @staticmethod
-    def get_station_from_station_id(station_id: str) -> Station:
-        xml = NOAAADDSStationHelper._request_noaa_xml(station_id)
-        tree_root = NOAAADDSStationHelper._parse_noaa_xml(xml)
-        station = NOAAADDSStationHelper._create_station_from_xml_element(tree_root)
+    def get_station_from_station_id(self, station_id: str) -> Station:
+        xml = self._request_noaa_xml(station_id)
+        tree_root = self._parse_noaa_xml(xml)
+        station = self._create_station_from_xml_element(tree_root)
 
         return station
 
-    @staticmethod
-    def _create_noaa_request_uri(station_id: str) -> str:
+    def get_station_from_lat_lon(self, latitude: float, longitude: float) -> Station:
         pass
 
-    @staticmethod
-    def _request_noaa_xml(station_id: str) -> str:
+    def _create_noaa_request_uri(self, station_id: str) -> str:
+        pass
+
+    def _request_noaa_xml(self, station_id: str) -> str:
         # prepare url
-        url = NOAAADDSStationHelper.NOAA_ADDS_URL
-        format = NOAAADDSStationHelper.NOAA_ADDS_FORMAT
+        url = self.noaa_adds_url
+        format = self.noaa_adds_format
 
         stations_params = {
             "dataSource": "stations",
@@ -116,22 +73,7 @@ class NOAAADDSStationHelper(StationHelper):
 
         return response_xml
 
-    def _parse_noaa_xml(xml: str) -> Element:
-        # prepare - create station object
-        # station_id: str = ""  # The 4-letter station specifier
-        # wmo_id: str = ""  # Four-letter WMO Id for the station
-        # latitude: float = 0.0  # The latitude in decimal degrees
-        # longitude: float = 0.0  # The longitude in decimal degrees
-        # elevation_m: float = (
-        #     0.0  # The elevation of the station in MSL (above mean sea-level)
-        # )
-        # site: str = ""  # The "common" name/human-readable name of the station
-        # state: str = (
-        #     ""  # The two-letter abbreviation for the U.S. state or Canadian province
-        # )
-        # country: str = ""  # The two-letter country abbreviation
-        # site_type: StationType = StationType.METAR
-
+    def _parse_noaa_xml(self, xml: str) -> Element:
         try:
             xml_tree_root = fromstring(xml)
         except ParseError:
@@ -139,76 +81,6 @@ class NOAAADDSStationHelper(StationHelper):
 
         return xml_tree_root
 
-    @staticmethod
-    def _get_data_source_from_xml_element(xml_tree_root: Element) -> str:
-        return xml_tree_root[1].attrib
 
-    @staticmethod
-    def _get_data_from_xml_element(xml_tree_root: Element) -> str:
-        return xml_tree_root[6].attrib
-
-    @staticmethod
-    def _get_station_from_xml_element(xml_tree_root: Element) -> str:
-        return xml_tree_root[6][0]
-
-    @staticmethod
-    def _get_site_type_list_from_xml_element(
-        xml_station_root: Element,
-    ) -> list(StationType):
-        out_list = []
-
-        site_types = xml_station_root
-        for child in site_types:
-            # METAR | rawinsonde | TAF | NEXRAD | wind_profiler | WFO_office | SYNOPS
-            # https://docs.python.org/3/tutorial/controlflow.html?highlight=match#match-statements
-            match child.tag:
-                case "METAR":
-                    out_list.append(StationType.METAR)
-                case "rawinsonde":
-                    out_list.append(StationType.RAWINDSONDE)
-                case "TAF":
-                    out_list.append(StationType.TAF)
-                case "NEXRAD":
-                    out_list.append(StationType.NEXRAD)
-                case "wind_profiler":
-                    out_list.append(StationType.WIND_PROFILER)
-                case "WFO_office":
-                    out_list.append(StationType.WFO_OFFICE)
-                case "SYNOPS":
-                    out_list.append(StationType.SYNOPS)
-
-        return out_list
-
-    @staticmethod
-    def _create_station_from_xml_element(xml_tree_root: Element) -> Station:
-        station_element = NOAAADDSStationHelper._get_station_from_xml_element(
-            xml_tree_root
-        )
-
-        station_id = station_element[0].text
-        wmo_id = station_element[1].text
-        latitude = float(station_element[2].text)
-        longitude = float(station_element[3].text)
-        elevation_m = float(station_element[4].text)
-        site = station_element[5].text
-        state = station_element[6].text
-        country = station_element[7].text
-        site_type = NOAAADDSStationHelper._get_site_type_list_from_xml_element(
-            station_element[8]
-        )
-
-        return Station(
-            station_id,
-            wmo_id,
-            latitude,
-            longitude,
-            elevation_m,
-            site,
-            state,
-            country,
-            site_type,
-        )
-
-    @staticmethod
-    def get_station_from_lat_lon(latitude: float, longitude: float) -> Station:
-        pass
+def main():
+    noaa_adds_url
