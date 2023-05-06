@@ -4,14 +4,11 @@ import time
 from pathlib import Path
 
 import pytest
-<<<<<<< HEAD
 from sqlalchemy.exc import OperationalError
-=======
 import redis
 import requests
 from allocation import config
 from allocation.adapters.orm import mapper_registry, start_mappers
->>>>>>> ab31b3ba1a1fb4bbdf5f126182980f97ca51702c
 from sqlalchemy import create_engine
 from sqlalchemy.sql import delete, insert, select, text
 from sqlalchemy.orm import sessionmaker, clear_mappers
@@ -47,11 +44,6 @@ def session_factory(file_sqlite_db):
     clear_mappers()
     file_sqlite_db.dispose()
 
-<<<<<<< HEAD
-    # remove db
-    path = Path(__file__).parent
-    os.remove(path / "allocation.db")
-=======
 
 @retry(stop=stop_after_delay(10))
 def wait_for_postgres_to_come_up(engine):
@@ -75,7 +67,6 @@ def postgres_db():
     wait_for_postgres_to_come_up(engine)
     mapper_registry.metadata.create_all(engine)
     return engine
->>>>>>> ab31b3ba1a1fb4bbdf5f126182980f97ca51702c
 
 
 @pytest.fixture
